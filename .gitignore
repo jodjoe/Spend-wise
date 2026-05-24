@@ -1,0 +1,33 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Dependencies
+vendor/
+node_modules/
+
+# Environment / secrets
+.env
+.env.local
+config.php
+*.pem
+
+# Logs and runtime
+logs/
+*.log
+tmp/
+/tmp/
+
+# Databases
+*.sqlite
+
+# PHP
+phpunit-result-cache
+
+# Misc
+*.cache
+*.swp
