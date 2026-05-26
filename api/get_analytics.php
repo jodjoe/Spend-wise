@@ -49,7 +49,7 @@ try {
         ];
     }
 
-    $stmt = $pdo->prepare('SELECT e.id, e.amount, e.note, e.expense_date, c.name as category_name, c.icon as category_icon FROM expenses e JOIN categories c ON e.category_id = c.id WHERE e.user_id = :user_id ORDER BY e.expense_date DESC, e.created_at DESC LIMIT 5');
+    $stmt = $pdo->prepare('SELECT e.id, e.amount, e.note, e.expense_date, c.name as category_name, c.icon as category_icon FROM expenses e LEFT JOIN categories c ON e.category_id = c.id AND c.user_id = e.user_id WHERE e.user_id = :user_id ORDER BY e.expense_date DESC, e.created_at DESC LIMIT 5');
     $stmt->execute([':user_id' => $user_id]);
     $recent_expenses = [];
     while ($expense = $stmt->fetch()) {
@@ -60,8 +60,8 @@ try {
             'note' => $expense['note'],
             'expense_date' => $expense['expense_date'],
             'expense_date_formatted' => date('d M Y', strtotime($expense['expense_date'])),
-            'category_name' => $expense['category_name'],
-            'category_icon' => $expense['category_icon']
+            'category_name' => $expense['category_name'] ?? 'Uncategorized',
+            'category_icon' => $expense['category_icon'] ?? '📦'
         ];
     }
 

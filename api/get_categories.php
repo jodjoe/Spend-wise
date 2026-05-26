@@ -20,12 +20,24 @@ try {
     $pdo = getDB();
     $user_id = $_SESSION['user_id'];
 
-    // Fetch all categories for this user
+    // Fetch all categories for this user with month spending and budget
     $stmt = $pdo->prepare('
-        SELECT id, name, icon, is_default 
-        FROM categories 
-        WHERE user_id = :user_id 
-        ORDER BY is_default DESC, name ASC
+        SELECT c.id, c.name, c.icon, c.is_default,
+               COALESCE(SUM(e.amount), 0) AS month_spent,
+               COALESCE(b.amount, 0) AS budget_amount
+        FROM categories c
+        LEFT JOIN expenses e
+            ON e.category_id = c.id
+            AND e.user_id = c.user_id
+            AND MONTH(e.expense_date) = MONTH(CURDATE())
+            AND YEAR(e.expense_date)  = YEAR(CURDATE())
+        LEFT JOIN budgets b
+            ON b.category_id = c.id
+            AND b.user_id = c.user_id
+            AND b.period = \'monthly\'
+        WHERE c.user_id = :user_id
+        GROUP BY c.id
+        ORDER BY c.is_default DESC, c.name ASC
     ');
     $stmt->execute([':user_id' => $user_id]);
     $categories = $stmt->fetchAll();

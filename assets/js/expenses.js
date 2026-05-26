@@ -1,307 +1,380 @@
-const searchInput = document.getElementById('search-text');
-const filterCategorySelect = document.getElementById('filter-category');
-const filterDateFrom = document.getElementById('filter-date-from');
-const filterDateTo = document.getElementById('filter-date-to');
-const filterMinAmount = document.getElementById('filter-min-amount');
-const filterMaxAmount = document.getElementById('filter-max-amount');
-const expensesList = document.getElementById('expenses-list');
-const expensesEmptyState = document.getElementById('expenses-empty');
-const expenseModal = document.getElementById('expense-modal');
-const openExpenseModalButton = document.getElementById('fab-add-expense');
-const closeExpenseModalButton = document.getElementById('close-expense-modal');
-const cancelExpenseButton = document.getElementById('cancel-expense');
-const expenseForm = document.getElementById('expense-form');
-const expenseIdInput = document.getElementById('expense-id');
-const expenseAmountInput = document.getElementById('expense-amount');
-const expenseCategorySelect = document.getElementById('expense-category');
-const expenseDateInput = document.getElementById('expense-date');
-const expenseNoteInput = document.getElementById('expense-note');
-const tabs = Array.from(document.querySelectorAll('.tab'));
-const manualTab = document.getElementById('manual-tab');
-const smsTab = document.getElementById('sms-tab');
-const parseSmsButton = document.getElementById('parse-sms');
-const smsTextInput = document.getElementById('sms-text');
-const smsPreview = document.getElementById('sms-preview');
+/**
+ * Expenses Page — Add, Edit, Delete, Filter
+ * All DOM queries run after DOMContentLoaded to prevent null crashes.
+ */
 
-let expensesData = [];
-let debounceTimeout = null;
+document.addEventListener('DOMContentLoaded', function () {
 
-function toggleExpenseModal(show) {
-  if (show) {
+  // ── DOM refs ────────────────────────────────────────────────
+  const searchInput          = document.getElementById('search-text');
+  const filterCategorySelect = document.getElementById('filter-category');
+  const filterDateFrom       = document.getElementById('filter-date-from');
+  const filterDateTo         = document.getElementById('filter-date-to');
+  const filterMinAmount      = document.getElementById('filter-min-amount');
+  const filterMaxAmount      = document.getElementById('filter-max-amount');
+  const clearFiltersBtn      = document.getElementById('clear-filters');
+  const expensesList         = document.getElementById('expenses-list');
+  const expensesLoading      = document.getElementById('expenses-loading');
+  const expensesEmptyState   = document.getElementById('expenses-empty');
+  const expenseCountLabel    = document.getElementById('expense-count-label');
+  const expenseTotalLabel    = document.getElementById('expense-total-label');
+
+  const expenseModal         = document.getElementById('expense-modal');
+  const fabBtn               = document.getElementById('fab-add-expense');
+  const closeModalBtn        = document.getElementById('close-expense-modal');
+  const cancelBtn            = document.getElementById('cancel-expense');
+  const expenseForm          = document.getElementById('expense-form');
+  const expenseIdInput       = document.getElementById('expense-id');
+  const amountInput          = document.getElementById('expense-amount');
+  const categorySelect       = document.getElementById('expense-category');
+  const dateInput            = document.getElementById('expense-date');
+  const noteInput            = document.getElementById('expense-note');
+  const amountError          = document.getElementById('amount-error');
+  const categoryError        = document.getElementById('category-error');
+  const modalTitle           = document.getElementById('expense-modal-title');
+  const saveBtn              = document.getElementById('save-expense');
+
+  // SMS tab elements (may not exist if removed from HTML)
+  const parseSmsBtn  = document.getElementById('parse-sms');
+  const smsTextInput = document.getElementById('sms-text');
+  const smsPreview   = document.getElementById('sms-preview');
+  const manualTab    = document.getElementById('manual-tab');
+  const smsTab       = document.getElementById('sms-tab');
+  const tabBtns      = Array.from(document.querySelectorAll('#expense-modal .tab'));
+
+  let expensesData  = [];
+  let debounceTimer = null;
+
+  // ── CSRF ────────────────────────────────────────────────────
+  function getCsrf() {
+    const m = document.querySelector('meta[name="csrf-token"]');
+    return m ? m.getAttribute('content') : '';
+  }
+  // expose both names used across the codebase
+  window.appendCsrfToken = function (fd) { fd.append('csrf_token', getCsrf()); };
+  function appendCsrf(fd) { fd.append('csrf_token', getCsrf()); }
+
+  // ── Loading state ───────────────────────────────────────────
+  function setLoading(on) {
+    expensesLoading.classList.toggle('hidden', !on);
+    expensesList.classList.toggle('hidden', on);
+  }
+
+  // ── Modal open / close ──────────────────────────────────────
+  function openModal() {
     expenseModal.classList.add('show');
     document.body.style.overflow = 'hidden';
-  } else {
+    // Focus first input after animation
+    setTimeout(() => amountInput && amountInput.focus(), 150);
+  }
+
+  function closeModal() {
     expenseModal.classList.remove('show');
     document.body.style.overflow = '';
   }
-}
 
-function resetExpenseForm() {
-  expenseIdInput.value = '0';
-  expenseAmountInput.value = '';
-  expenseCategorySelect.value = '';
-  expenseDateInput.value = new Date().toISOString().split('T')[0];
-  expenseNoteInput.value = '';
-  smsTextInput.value = '';
-  smsPreview.classList.add('hidden');
-  tabs.forEach((tab, index) => {
-    tab.classList.toggle('active', index === 0);
-  });
-  manualTab.classList.remove('hidden');
-  smsTab.classList.add('hidden');
-}
-
-function switchTab(tabName) {
-  tabs.forEach(tab => {
-    tab.classList.toggle('active', tab.dataset.tab === tabName);
-  });
-  manualTab.classList.toggle('hidden', tabName !== 'manual');
-  smsTab.classList.toggle('hidden', tabName !== 'sms');
-}
-
-async function loadCategories() {
-  try {
-    const response = await fetch('/api/get_categories.php');
-    const result = await response.json();
-    if (!result.success) {
-      showPopup({type: 'danger', title: 'Error', message: result.message});
-      return;
-    }
-    const options = result.data.map(category => `
-      <option value="${category.id}">${category.icon} ${category.name}</option>
-    `).join('');
-    filterCategorySelect.innerHTML = `<option value="0">All categories</option>${options}`;
-    expenseCategorySelect.innerHTML = `<option value="">Select category</option>${options}`;
-  } catch (error) {
-    showPopup({type: 'danger', title: 'Error', message: 'Unable to load categories.'});
-  }
-}
-
-async function loadExpenses() {
-  const params = new URLSearchParams();
-  if (searchInput.value.trim()) params.append('search', searchInput.value.trim());
-  if (filterCategorySelect.value) params.append('category_id', filterCategorySelect.value);
-  if (filterDateFrom.value) params.append('date_from', filterDateFrom.value);
-  if (filterDateTo.value) params.append('date_to', filterDateTo.value);
-  if (filterMinAmount.value) params.append('amount_min', filterMinAmount.value);
-  if (filterMaxAmount.value) params.append('amount_max', filterMaxAmount.value);
-
-  try {
-    const response = await fetch(`/api/get_expenses.php?${params.toString()}`);
-    const result = await response.json();
-    if (!result.success) {
-      showPopup({type: 'danger', title: 'Error', message: result.message});
-      return;
-    }
-    expensesData = result.data;
-    renderExpenses();
-  } catch (error) {
-    showPopup({type: 'danger', title: 'Error', message: 'Unable to load expenses.'});
-  }
-}
-
-function renderExpenses() {
-  if (expensesData.length === 0) {
-    expensesList.innerHTML = '';
-    expensesEmptyState.classList.remove('hidden');
-    return;
-  }
-
-  expensesEmptyState.classList.add('hidden');
-  expensesList.innerHTML = expensesData.map(expense => `
-    <div class="list-item">
-      <div class="list-item-left">
-        <div class="list-item-icon">${expense.category_icon}</div>
-        <div class="list-item-content">
-          <div class="list-item-title">${expense.category_name}</div>
-          <div class="list-item-subtitle">${expense.note || 'No note'} · ${expense.expense_date_formatted}</div>
-        </div>
-      </div>
-      <div class="text-right">
-        <div class="list-item-amount">${expense.amount_formatted}</div>
-        <div class="list-item-actions">
-          <button type="button" class="edit-expense" data-id="${expense.id}"><i class="fa fa-pen"></i></button>
-          <button type="button" class="delete-expense" data-id="${expense.id}"><i class="fa fa-trash"></i></button>
-        </div>
-      </div>
-    </div>
-  `).join('');
-}
-
-function formatExpenseForEdit(expense) {
-  expenseIdInput.value = expense.id;
-  expenseAmountInput.value = expense.amount;
-  expenseCategorySelect.value = expense.category_id || expense.category_id;
-  expenseDateInput.value = expense.expense_date;
-  expenseNoteInput.value = expense.note;
-}
-
-function handleExpenseAction(event) {
-  const editButton = event.target.closest('.edit-expense');
-  const deleteButton = event.target.closest('.delete-expense');
-
-  if (editButton) {
-    const id = editButton.dataset.id;
-    const expense = expensesData.find(item => item.id === parseInt(id, 10));
-    if (!expense) return;
+  function resetForm() {
+    expenseIdInput.value = '0';
+    expenseForm.reset();
+    dateInput.value = new Date().toISOString().split('T')[0];
+    if (smsTextInput) smsTextInput.value = '';
+    if (smsPreview)   smsPreview.classList.add('hidden');
+    amountError.classList.remove('show');
+    categoryError.classList.remove('show');
     switchTab('manual');
-    expenseModal.querySelector('#expense-modal-title').textContent = 'Edit Expense';
-    formatExpenseForEdit(expense);
-    toggleExpenseModal(true);
-    return;
   }
 
-  if (deleteButton) {
-    const id = deleteButton.dataset.id;
-    deleteExpense(parseInt(id, 10));
+  // ── Tab switching ───────────────────────────────────────────
+  function switchTab(name) {
+    tabBtns.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    if (manualTab) manualTab.classList.toggle('hidden', name !== 'manual');
+    if (smsTab)    smsTab.classList.toggle('hidden',    name !== 'sms');
   }
-}
 
-function deleteExpense(id) {
-  showConfirm({
-    title: 'Delete Expense',
-    message: 'Are you sure you want to delete this expense?',
-    confirmText: 'Delete',
-    cancelText: 'Cancel',
-    type: 'danger',
-    onConfirm: async () => {
-      try {
-        const formData = new FormData();
-        formData.append('id', id);
-        appendCsrfToken(formData);
+  tabBtns.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 
-        const response = await fetch('/api/delete_expense.php', {
-          method: 'POST',
-          body: formData
-        }).then(res => res.json());
+  // ── FAB — open Add modal ────────────────────────────────────
+  fabBtn.addEventListener('click', () => {
+    modalTitle.textContent = 'Add Expense';
+    resetForm();
+    openModal();
+  });
 
-        if (!response.success) {
-          showToast(response.message || 'Unable to delete expense.', 'error');
-          return;
+  // ── Close modal ─────────────────────────────────────────────
+  closeModalBtn.addEventListener('click', closeModal);
+  cancelBtn.addEventListener('click', closeModal);
+  expenseModal.addEventListener('click', e => {
+    if (e.target === expenseModal) closeModal();
+  });
+
+  // ── Load categories into both selects ───────────────────────
+  async function loadCategories() {
+    try {
+      const res  = await fetch('/api/get_categories.php');
+      const json = await res.json();
+      if (!json.success) return;
+
+      const opts = json.data.map(c => {
+        const isEmoji = c.icon && !c.icon.startsWith('/');
+        const label   = isEmoji ? `${c.icon} ${c.name}` : c.name;
+        return `<option value="${c.id}">${label}</option>`;
+      }).join('');
+
+      filterCategorySelect.innerHTML = `<option value="0">All categories</option>${opts}`;
+      categorySelect.innerHTML       = `<option value="">Select a category</option>${opts}`;
+    } catch (_) {
+      showToast('Could not load categories.', 'error');
+    }
+  }
+
+  // ── Fetch & render expenses ─────────────────────────────────
+  async function loadExpenses() {
+    setLoading(true);
+    expensesEmptyState.classList.add('hidden');
+
+    const p = new URLSearchParams();
+    const search = searchInput.value.trim();
+    const cat    = filterCategorySelect.value;
+    const from   = filterDateFrom.value;
+    const to     = filterDateTo.value;
+    const min    = filterMinAmount.value;
+    const max    = filterMaxAmount.value;
+
+    if (search)          p.append('search',      search);
+    if (cat && cat !== '0') p.append('category_id', cat);
+    if (from)            p.append('date_from',   from);
+    if (to)              p.append('date_to',     to);
+    if (min)             p.append('amount_min',  min);
+    if (max)             p.append('amount_max',  max);
+
+    try {
+      const res  = await fetch(`/api/get_expenses.php?${p}`);
+      const json = await res.json();
+      setLoading(false);
+      if (!json.success) { showToast(json.message || 'Could not load expenses.', 'error'); return; }
+      expensesData = json.data;
+      renderExpenses();
+    } catch (_) {
+      setLoading(false);
+      showToast('Could not load expenses.', 'error');
+    }
+  }
+
+  function renderExpenses() {
+    const total = expensesData.reduce((s, e) => s + e.amount, 0);
+    expenseCountLabel.textContent = `${expensesData.length} expense${expensesData.length !== 1 ? 's' : ''}`;
+    expenseTotalLabel.textContent = `Total: ${total.toFixed(2)} ETB`;
+
+    if (expensesData.length === 0) {
+      expensesList.innerHTML = '';
+      expensesEmptyState.classList.remove('hidden');
+      return;
+    }
+    expensesEmptyState.classList.add('hidden');
+
+    // Group by date
+    const groups = {};
+    expensesData.forEach(e => {
+      if (!groups[e.expense_date]) groups[e.expense_date] = [];
+      groups[e.expense_date].push(e);
+    });
+
+    expensesList.innerHTML = Object.entries(groups).map(([, items]) => {
+      const dayTotal = items.reduce((s, i) => s + i.amount, 0);
+      const rows = items.map(ex => `
+        <div class="list-item">
+          <div class="list-item-left">
+            <div class="list-item-icon">${ex.category_icon}</div>
+            <div class="list-item-content">
+              <div class="list-item-title">${ex.category_name}</div>
+              <div class="list-item-subtitle">${ex.note || '<em style="color:var(--text-muted)">No note</em>'}</div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+            <div class="list-item-amount">${ex.amount_formatted}</div>
+            <div class="list-item-actions">
+              <button type="button" class="edit-expense" data-id="${ex.id}" title="Edit"><i class="fa fa-pen"></i></button>
+              <button type="button" class="delete-expense" data-id="${ex.id}" title="Delete" style="color:var(--danger);"><i class="fa fa-trash"></i></button>
+            </div>
+          </div>
+        </div>`).join('');
+
+      return `
+        <div style="margin-bottom:4px;">
+          <div class="flex-between" style="padding:6px 4px 4px;">
+            <span style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;">${items[0].expense_date_formatted}</span>
+            <span style="font-size:12px;color:var(--text-muted);">${dayTotal.toFixed(2)} ETB</span>
+          </div>
+          ${rows}
+        </div>`;
+    }).join('');
+  }
+
+  // ── Edit / Delete delegation ────────────────────────────────
+  expensesList.addEventListener('click', e => {
+    const editBtn   = e.target.closest('.edit-expense');
+    const deleteBtn = e.target.closest('.delete-expense');
+
+    if (editBtn) {
+      const ex = expensesData.find(x => x.id === parseInt(editBtn.dataset.id, 10));
+      if (!ex) return;
+      modalTitle.textContent  = 'Edit Expense';
+      resetForm();
+      expenseIdInput.value    = ex.id;
+      amountInput.value       = ex.amount;
+      dateInput.value         = ex.expense_date;
+      noteInput.value         = ex.note || '';
+      // Set category after a tick so options are rendered
+      setTimeout(() => { categorySelect.value = String(ex.category_id); }, 0);
+      switchTab('manual');
+      openModal();
+    }
+
+    if (deleteBtn) {
+      const id = parseInt(deleteBtn.dataset.id, 10);
+      showConfirm({
+        title: 'Delete Expense',
+        message: 'Delete this expense? This cannot be undone.',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        type: 'danger',
+        onConfirm: async () => {
+          try {
+            const fd = new FormData();
+            fd.append('id', id);
+            appendCsrf(fd);
+            const res  = await fetch('/api/delete_expense.php', { method: 'POST', body: fd });
+            const json = await res.json();
+            if (!json.success) { showToast(json.message || 'Delete failed.', 'error'); return; }
+            showToast('Expense deleted.', 'success');
+            loadExpenses();
+          } catch (_) {
+            showToast('Delete failed.', 'error');
+          }
         }
-
-        showToast('Deleted successfully', 'success');
-        loadExpenses();
-      } catch (error) {
-        showToast('Unable to delete expense.', 'error');
-      }
+      });
     }
   });
-}
 
-expenseForm.addEventListener('submit', async event => {
-  event.preventDefault();
-  const id = expenseIdInput.value;
-  const formData = new FormData(expenseForm);
-  appendCsrfToken(formData);
-  const url = id && parseInt(id, 10) > 0 ? '/api/edit_expense.php' : '/api/add_expense.php';
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      body: formData
-    }).then(res => res.json());
-
-    if (!response.success) {
-      showToast(response.message || 'Unable to save expense.', 'error');
-      return;
-    }
-
-    const isEdit = id && parseInt(id, 10) > 0;
-    if (isEdit) {
-      showToast('Updated successfully', 'success');
-    } else if (response.popup) {
-      showPopup(response.popup);
+  // ── Validation ──────────────────────────────────────────────
+  function validateForm() {
+    let ok = true;
+    const amt = parseFloat(amountInput.value);
+    if (!amt || amt <= 0 || amt >= 100000) {
+      amountError.classList.add('show'); ok = false;
     } else {
-      showToast('Saved successfully', 'success');
+      amountError.classList.remove('show');
     }
-
-    resetExpenseForm();
-    toggleExpenseModal(false);
-    loadExpenses();
-  } catch (error) {
-    showToast('Unable to save expense.', 'error');
+    if (!categorySelect.value) {
+      categoryError.classList.add('show'); ok = false;
+    } else {
+      categoryError.classList.remove('show');
+    }
+    return ok;
   }
-});
 
-openExpenseModalButton.addEventListener('click', () => {
-  expenseModal.querySelector('#expense-modal-title').textContent = 'Add Expense';
-  resetExpenseForm();
-  switchTab('manual');
-  toggleExpenseModal(true);
-});
+  // ── Save (add or edit) ──────────────────────────────────────
+  expenseForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!validateForm()) return;
 
-closeExpenseModalButton.addEventListener('click', () => toggleExpenseModal(false));
-cancelExpenseButton.addEventListener('click', () => toggleExpenseModal(false));
-expenseModal.addEventListener('click', event => {
-  if (event.target === expenseModal) {
-    toggleExpenseModal(false);
-  }
-});
+    saveBtn.disabled    = true;
+    saveBtn.innerHTML   = '<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Saving…';
 
-tabs.forEach(tab => {
-  tab.addEventListener('click', () => {
-    switchTab(tab.dataset.tab);
+    const id  = parseInt(expenseIdInput.value, 10);
+    const url = id > 0 ? '/api/edit_expense.php' : '/api/add_expense.php';
+    const fd  = new FormData(expenseForm);
+    appendCsrf(fd);
+
+    try {
+      const res  = await fetch(url, { method: 'POST', body: fd });
+      const json = await res.json();
+
+      if (!json.success) {
+        showToast(json.message || 'Could not save expense.', 'error');
+        return;
+      }
+
+      closeModal();
+      resetForm();
+      loadExpenses();
+
+      if (id > 0) {
+        showToast('Expense updated.', 'success');
+      } else if (json.data && json.data.popup) {
+        showPopup(json.data.popup);
+      } else {
+        showToast('Expense saved!', 'success');
+      }
+    } catch (_) {
+      showToast('Could not save expense.', 'error');
+    } finally {
+      saveBtn.disabled  = false;
+      saveBtn.innerHTML = '<i class="fa fa-floppy-disk"></i> Save';
+    }
   });
-});
 
-parseSmsButton.addEventListener('click', async () => {
-  const text = smsTextInput.value.trim();
-  if (!text) {
-    showPopup({type: 'warning', title: 'Validation', message: 'Paste SMS text first.'});
-    return;
+  // ── SMS parsing (optional — only if element exists) ─────────
+  if (parseSmsBtn) {
+    parseSmsBtn.addEventListener('click', async () => {
+      const text = smsTextInput.value.trim();
+      if (!text) { showToast('Paste an SMS first.', 'warning'); return; }
+
+      parseSmsBtn.disabled  = true;
+      parseSmsBtn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Parsing…';
+
+      try {
+        const fd = new FormData();
+        fd.append('text', text);
+        appendCsrf(fd);
+        const res  = await fetch('/api/parse_sms.php', { method: 'POST', body: fd });
+        const json = await res.json();
+
+        if (!json.success) { showToast(json.message || 'Could not parse SMS.', 'error'); return; }
+
+        const d = json.data;
+        if (d.amount)       amountInput.value = d.amount;
+        if (d.note)         noteInput.value   = d.note;
+        if (d.expense_date) dateInput.value   = d.expense_date;
+
+        if (smsPreview) {
+          smsPreview.textContent = '✓ Parsed! Review the fields below and save.';
+          smsPreview.classList.remove('hidden');
+        }
+        switchTab('manual');
+      } catch (_) {
+        showToast('Could not parse SMS.', 'error');
+      } finally {
+        parseSmsBtn.disabled  = false;
+        parseSmsBtn.innerHTML = '<i class="fa fa-wand-magic-sparkles"></i> Parse with AI';
+      }
+    });
   }
 
-  try {
-    const formData = new FormData();
-    formData.append('text', text);
-    appendCsrfToken(formData);
-    const response = await fetch('/api/parse_sms.php', {
-      method: 'POST',
-      body: formData
-    }).then(res => res.json());
-
-    if (!response.success) {
-      showPopup({type: 'danger', title: 'Error', message: response.message});
-      return;
-    }
-
-    if (response.data.amount) {
-      expenseAmountInput.value = response.data.amount;
-    }
-    if (response.data.note) {
-      expenseNoteInput.value = response.data.note;
-    }
-    if (response.data.expense_date) {
-      expenseDateInput.value = response.data.expense_date;
-    }
-
-    smsPreview.textContent = 'SMS parsed successfully. Check the manual entry tab to review values.';
-    smsPreview.classList.remove('hidden');
-  } catch (error) {
-    showPopup({type: 'danger', title: 'Error', message: 'Unable to parse SMS.'});
+  // ── Filters ─────────────────────────────────────────────────
+  function debounce(fn, ms = 350) {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(fn, ms);
   }
-});
 
-function applyFilterEvents() {
-  const onFilterChange = () => {
-    clearTimeout(debounceTimeout);
-    debounceTimeout = setTimeout(loadExpenses, 300);
-  };
-
-  searchInput.addEventListener('input', onFilterChange);
+  searchInput.addEventListener('input',           () => debounce(loadExpenses));
+  filterMinAmount.addEventListener('input',       () => debounce(loadExpenses));
+  filterMaxAmount.addEventListener('input',       () => debounce(loadExpenses));
   filterCategorySelect.addEventListener('change', loadExpenses);
-  filterDateFrom.addEventListener('change', loadExpenses);
-  filterDateTo.addEventListener('change', loadExpenses);
-  filterMinAmount.addEventListener('input', onFilterChange);
-  filterMaxAmount.addEventListener('input', onFilterChange);
-}
+  filterDateFrom.addEventListener('change',       loadExpenses);
+  filterDateTo.addEventListener('change',         loadExpenses);
 
-expensesList.addEventListener('click', handleExpenseAction);
+  clearFiltersBtn.addEventListener('click', () => {
+    searchInput.value          = '';
+    filterCategorySelect.value = '0';
+    filterDateFrom.value       = '';
+    filterDateTo.value         = '';
+    filterMinAmount.value      = '';
+    filterMaxAmount.value      = '';
+    loadExpenses();
+  });
 
-(async function init() {
-  await loadCategories();
-  applyFilterEvents();
-  loadExpenses();
-})();
+  // ── Init ────────────────────────────────────────────────────
+  loadCategories().then(() => loadExpenses());
 
+}); // end DOMContentLoaded

@@ -1,108 +1,113 @@
-const allowanceValue = document.getElementById('dashboard-allowance');
-const spentValue = document.getElementById('dashboard-spent');
-const remainingValue = document.getElementById('dashboard-remaining');
-const todayValue = document.getElementById('dashboard-today');
-const spentPercent = document.getElementById('dashboard-spent-percent');
-const progressBar = document.getElementById('dashboard-progress');
-const paceText = document.getElementById('dashboard-pace');
-const predictionText = document.getElementById('dashboard-prediction');
-const topCategoriesList = document.getElementById('top-categories-list');
-const topCategoriesEmpty = document.getElementById('top-categories-empty');
-const recentExpensesList = document.getElementById('recent-expenses-list');
-const recentExpensesEmpty = document.getElementById('recent-expenses-empty');
-
-function formatAmount(amount) {
-  return `${amount.toFixed(2)} ETB`;
+// ── Helpers ─────────────────────────────────────────────────
+function fmt(n) {
+  return Number(n).toLocaleString('en-ET', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ETB';
 }
 
-function getPaceLabel(status) {
-  switch (status) {
-    case 'warning':
-      return 'Warning: spending is slightly ahead of schedule';
-    case 'critical':
-      return 'Critical: reduce spending to stay on track';
-    default:
-      return 'On track: you are managing your budget well';
-  }
-}
-
-function getProgressClass(percent) {
-  if (percent < 60) return 'green';
-  if (percent < 80) return 'yellow';
+function barClass(pct) {
+  if (pct < 60) return 'green';
+  if (pct < 85) return 'yellow';
   return 'red';
 }
 
-function renderTopCategories(categories) {
-  if (!categories || categories.length === 0) {
-    topCategoriesList.innerHTML = '';
-    topCategoriesEmpty.classList.remove('hidden');
+const paceConfig = {
+  on_track: { cls: 'on_track', icon: 'fa-circle-check', label: 'On track' },
+  warning:  { cls: 'warning',  icon: 'fa-triangle-exclamation', label: 'Slightly over pace' },
+  critical: { cls: 'critical', icon: 'fa-circle-xmark', label: 'Over budget pace' },
+};
+
+// ── Render functions ─────────────────────────────────────────
+function renderMetrics(d) {
+  const set = (id, val, colorClass) => {
+    const el = document.getElementById(id);
+    el.textContent = val;
+    el.classList.remove('loading');
+    if (colorClass) el.style.color = colorClass;
+  };
+
+  set('dash-allowance', fmt(d.monthly_allowance));
+  set('dash-spent',     fmt(d.month_spent),     d.spent_percent >= 85 ? '#cc0000' : null);
+  set('dash-remaining', fmt(d.month_remaining), d.month_remaining === 0 ? '#cc0000' : '#000');
+  set('dash-today',     fmt(d.today_remaining), d.today_remaining === 0 ? '#cc0000' : '#555');
+}
+
+function renderProgress(d) {
+  const pct = d.spent_percent;
+  document.getElementById('dash-pct').textContent = pct + '%';
+  const bar = document.getElementById('dash-bar');
+  bar.style.width = Math.min(pct, 100) + '%';
+  bar.style.background = pct >= 85 ? '#cc0000' : pct >= 60 ? '#888' : '#000';
+
+  const cfg = paceConfig[d.pace_status] || paceConfig.on_track;
+  const paceEl = document.getElementById('dash-pace');
+  paceEl.className = 'pace-chip ' + cfg.cls;
+  paceEl.innerHTML = `<i class="fa ${cfg.icon}"></i> ${cfg.label}`;
+
+  document.getElementById('dash-prediction').innerHTML =
+    `<i class="fa fa-chart-line"></i> Projected: ${d.predicted_remaining}`;
+}
+
+function renderCategories(cats) {
+  const grid  = document.getElementById('cat-grid');
+  const empty = document.getElementById('cat-empty');
+
+  if (!cats || cats.length === 0) {
+    grid.innerHTML = '';
+    empty.classList.remove('hidden');
     return;
   }
-
-  topCategoriesEmpty.classList.add('hidden');
-  topCategoriesList.innerHTML = categories.map(category => `
-    <div class="card">
-      <div class="flex-between mb-12">
-        <div>
-          <div class="grid-item-emoji">${category.icon}</div>
-          <h4>${category.name}</h4>
-        </div>
-        <span class="text-muted">${category.spent_formatted}</span>
-      </div>
+  empty.classList.add('hidden');
+  grid.innerHTML = cats.map(c => `
+    <div class="cat-chip">
+      <span class="cat-emoji">${c.icon}</span>
+      <span class="cat-name" title="${c.name}">${c.name}</span>
+      <span class="cat-amount">${c.spent_formatted}</span>
     </div>
   `).join('');
 }
 
-function renderRecentExpenses(expenses) {
+function renderExpenses(expenses) {
+  const list  = document.getElementById('exp-list');
+  const empty = document.getElementById('exp-empty');
+
   if (!expenses || expenses.length === 0) {
-    recentExpensesList.innerHTML = '';
-    recentExpensesEmpty.classList.remove('hidden');
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
     return;
   }
-
-  recentExpensesEmpty.classList.add('hidden');
-  recentExpensesList.innerHTML = expenses.map(expense => `
-    <div class="card">
-      <div class="flex-between mb-12">
-        <div>
-          <div class="grid-item-emoji">${expense.category_icon}</div>
-          <h4>${expense.category_name}</h4>
-          <p class="text-muted">${expense.note || 'No note'} · ${expense.expense_date_formatted}</p>
-        </div>
-        <div class="text-right">
-          <strong>${expense.amount_formatted}</strong>
-        </div>
+  empty.classList.add('hidden');
+  list.innerHTML = expenses.map(e => `
+    <div class="exp-item">
+      <div class="exp-icon">${e.category_icon}</div>
+      <div class="exp-info">
+        <div class="exp-cat">${e.category_name}</div>
+        <div class="exp-meta">${e.note ? e.note + ' · ' : ''}${e.expense_date_formatted}</div>
       </div>
+      <div class="exp-amount">${e.amount_formatted}</div>
     </div>
   `).join('');
 }
 
+// ── Load ─────────────────────────────────────────────────────
 async function loadDashboard() {
   try {
-    const response = await fetch('/api/get_analytics.php');
-    const result = await response.json();
-    if (!result.success) {
-      showPopup({type: 'danger', title: 'Error', message: result.message || 'Could not load dashboard.'});
+    const res  = await fetch(apiUrl('/api/get_analytics.php', '/dev/mock_analytics.php'));
+    const json = await res.json();
+
+    if (!json.success) {
+      if (typeof showPopup === 'function')
+        showPopup({ type: 'danger', title: 'Error', message: json.message || 'Could not load dashboard.' });
       return;
     }
 
-    const data = result.data;
-    allowanceValue.textContent = formatAmount(data.monthly_allowance);
-    spentValue.textContent = formatAmount(data.month_spent);
-    remainingValue.textContent = formatAmount(data.month_remaining);
-    todayValue.textContent = formatAmount(data.today_remaining);
-    spentPercent.textContent = `${data.spent_percent}%`;
-    progressBar.style.width = `${data.spent_percent}%`;
-    progressBar.className = `progress-bar ${getProgressClass(data.spent_percent)}`;
-    paceText.textContent = getPaceLabel(data.pace_status);
-    predictionText.textContent = `Projected month end: ${data.predicted_remaining}`;
-
-    renderTopCategories(data.top_categories);
-    renderRecentExpenses(data.recent_expenses);
-  } catch (error) {
-    showPopup({type: 'danger', title: 'Error', message: 'Unable to load dashboard.'});
+    const d = json.data;
+    renderMetrics(d);
+    renderProgress(d);
+    renderCategories(d.top_categories);
+    renderExpenses(d.recent_expenses);
+  } catch (err) {
+    if (typeof showPopup === 'function')
+      showPopup({ type: 'danger', title: 'Error', message: 'Unable to load dashboard.' });
   }
 }
 
 loadDashboard();
-

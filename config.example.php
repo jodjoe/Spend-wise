@@ -2,6 +2,7 @@
 /**
  * Example configuration for Spend-wise
  * Copy this to `config.php` and fill in your local values.
+ * Works with MariaDB or MySQL using PDO.
  */
 
 // ============================================================

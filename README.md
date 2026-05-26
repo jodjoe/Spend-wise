@@ -9,6 +9,7 @@ smart spending insights, and a personal AI financial assistant.
 ## Requirements
 - PHP 8.0 or higher
 - MySQL 8.0 or higher
+ - MySQL 8.0 or higher or MariaDB 10.3+
 - Apache (XAMPP recommended)
 - A Google Gemini API key (free at https://aistudio.google.com)
 
@@ -17,14 +18,12 @@ smart spending insights, and a personal AI financial assistant.
 ## Setup Instructions
 
 ### Step 1 — Import the database
-1. Open phpMyAdmin (http://localhost/phpmyadmin)
-2. Click "Import"
-3. Select `database.sql` from the project folder
-4. Click "Go"
-5. Database `birr_wise` will be created with all tables and sample data
+1. Open phpMyAdmin (http://localhost/phpmyadmin) or connect with the `mysql`/`mariadb` CLI
+2. Click "Import" (phpMyAdmin) or run the SQL via CLI
+3. Select `database.sql` from the project folder (or run `mysql -u root -p birr_wise < database.sql`)
+4. Database `birr_wise` will be created with all tables and sample data
 
-If your MariaDB root account requires a password, run this SQL after import instead of using root in `config.php`:
-
+If your MariaDB/MySQL root account requires a password, run this SQL after import instead of using root in `config.php`:
 ```sql
 CREATE USER IF NOT EXISTS 'birr_wise_user'@'localhost' IDENTIFIED BY 'Spendwise123!';
 GRANT ALL PRIVILEGES ON birr_wise.* TO 'birr_wise_user'@'localhost';
@@ -50,6 +49,19 @@ FLUSH PRIVILEGES;
 
 ### Step 4 — Run the app
 1. Start Apache and MySQL in XAMPP
+1. Start Apache and MySQL/MariaDB (or system MariaDB service)
+	- On Linux (systemd):
+
+```bash
+sudo systemctl start mariadb
+sudo systemctl enable mariadb
+```
+
+	- Or start MySQL (if using MySQL):
+
+```bash
+sudo systemctl start mysql
+```
 2. Open http://localhost/birr-wise
 3. You will be redirected to the login page
 

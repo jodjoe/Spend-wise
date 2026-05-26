@@ -36,49 +36,23 @@ try {
 
     // Validation - use helper function
     if (!validateAmount($amount)) {
-        http_response_code(400);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Amount must be between 0 and 100,000',
-            'field' => 'amount'
-        ]);
-        exit;
+        jsonResponse(false, [], 'Amount must be between 0 and 100,000', 400);
     }
 
     if ($category_id <= 0) {
-        http_response_code(400);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Please select a category',
-            'field' => 'category_id'
-        ]);
-        exit;
+        jsonResponse(false, [], 'Please select a category', 400);
     }
 
     // Verify category belongs to user
-    $stmt = $pdo->prepare('
-        SELECT id FROM categories 
-        WHERE id = :category_id AND user_id = :user_id
-    ');
+    $stmt = $pdo->prepare('SELECT id FROM categories WHERE id = :category_id AND user_id = :user_id');
     $stmt->execute([':category_id' => $category_id, ':user_id' => $user_id]);
     if (!$stmt->fetch()) {
-        http_response_code(403);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Invalid category'
-        ]);
-        exit;
+        jsonResponse(false, [], 'Invalid category', 403);
     }
 
-    // Verify expense_date is valid
-    if (strtotime($expense_date) === false) {
-        http_response_code(400);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Invalid expense date',
-            'field' => 'expense_date'
-        ]);
-        exit;
+    // Validate date format
+    if (!$expense_date || strtotime($expense_date) === false) {
+        jsonResponse(false, [], 'Invalid expense date', 400);
     }
 
     // Insert expense

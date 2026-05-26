@@ -1,128 +1,75 @@
 <?php
-/**
- * User Registration Page
- * 
- * Handles new user account creation with form validation.
- * Creates user account, inserts default categories, and redirects to onboarding.
- * 
- * @package BIRRWise
- * @version 1.0
- */
-
 require_once '../config.php';
 require_once '../includes/db.php';
 require_once '../includes/helpers.php';
 
-// Initialize variables
-$error = '';
-$full_name = '';
-$email = '';
+if (session_status() !== PHP_SESSION_ACTIVE) session_start();
 
-// Handle form submission
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+$error      = '';
+$full_name  = '';
+$email      = '';
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Get and sanitize inputs
-    $full_name = sanitize($_POST['full_name'] ?? '');
-    $email = sanitize($_POST['email'] ?? '');
-    $password = $_POST['password'] ?? '';
-    $confirm_password = $_POST['confirm_password'] ?? '';
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        $error = 'Invalid request. Please refresh and try again.';
+    } else {
+        $full_name        = trim(strip_tags($_POST['full_name'] ?? ''));
+        $email            = trim($_POST['email'] ?? '');
+        $password         = $_POST['password'] ?? '';
+        $confirm_password = $_POST['confirm_password'] ?? '';
 
-    // ============================================================
-    // SERVER-SIDE VALIDATION
-    // ============================================================
+        if (empty($full_name) || empty($email) || empty($password) || empty($confirm_password)) {
+            $error = 'All fields are required.';
+        } elseif (strlen($full_name) < 2 || strlen($full_name) > 100) {
+            $error = 'Full name must be between 2 and 100 characters.';
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $error = 'Please enter a valid email address.';
+        } elseif (strlen($password) < 8) {
+            $error = 'Password must be at least 8 characters.';
+        } elseif (!preg_match('/[0-9]/', $password)) {
+            $error = 'Password must contain at least one number.';
+        } elseif ($password !== $confirm_password) {
+            $error = 'Passwords do not match.';
+        } else {
+            try {
+                $pdo  = getDB();
+                $stmt = $pdo->prepare('SELECT id FROM users WHERE email = :email LIMIT 1');
+                $stmt->execute([':email' => $email]);
 
-    // Validate all fields are provided
-    if (empty($full_name) || empty($email) || empty($password) || empty($confirm_password)) {
-        $error = 'All fields are required';
-    }
-    // Validate email format
-    elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $error = 'Please enter a valid email address';
-    }
-    // Validate password length
-    elseif (strlen($password) < 8) {
-        $error = 'Password must be at least 8 characters long';
-    }
-    // Validate password has at least one number
-    elseif (!preg_match('/[0-9]/', $password)) {
-        $error = 'Password must contain at least one number';
-    }
-    // Validate passwords match
-    elseif ($password !== $confirm_password) {
-        $error = 'Passwords do not match';
-    }
-    // All validations passed
-    else {
-        try {
-            $pdo = getDB();
+                if ($stmt->fetch()) {
+                    $error = 'This email is already registered.';
+                } else {
+                    $hash = password_hash($password, PASSWORD_DEFAULT);
+                    $pdo->prepare('INSERT INTO users (name, email, password, monthly_allowance, onboarding_complete) VALUES (:name, :email, :password, :allowance, 0)')
+                        ->execute([':name' => $full_name, ':email' => $email, ':password' => $hash, ':allowance' => DEFAULT_ALLOWANCE]);
 
-            // Check if email already exists
-            $stmt = $pdo->prepare('SELECT id FROM users WHERE email = :email');
-            $stmt->execute([':email' => $email]);
-            $existing_user = $stmt->fetch();
+                    $user_id = $pdo->lastInsertId();
 
-            if ($existing_user) {
-                $error = 'This email is already registered';
-            } else {
-                // Hash password
-                $password_hash = password_hash($password, PASSWORD_DEFAULT);
+                    $default_categories = [
+                        ['Food','🍛'], ['Transport','🚌'], ['Clothing','👕'],
+                        ['School Supplies','📚'], ['Mobile Top-up','📱'], ['Café','☕'],
+                        ['Entertainment','🎮'], ['Health','🏥'], ['Other','🔀']
+                    ];
+                    $stmt = $pdo->prepare('INSERT INTO categories (user_id, name, icon, is_default) VALUES (:user_id, :name, :icon, 1)');
+                    foreach ($default_categories as [$name, $icon]) {
+                        $stmt->execute([':user_id' => $user_id, ':name' => $name, ':icon' => $icon]);
+                    }
 
-                // Insert new user with default values
-                $stmt = $pdo->prepare('
-                    INSERT INTO users (name, email, password, monthly_allowance, onboarding_complete)
-                    VALUES (:name, :email, :password, :allowance, 0)
-                ');
-                $stmt->execute([
-                    ':name' => $full_name,
-                    ':email' => $email,
-                    ':password' => $password_hash,
-                    ':allowance' => DEFAULT_ALLOWANCE
-                ]);
+                    session_regenerate_id(true);
+                    $_SESSION['user_id']             = $user_id;
+                    $_SESSION['user_name']           = $full_name;
+                    $_SESSION['onboarding_complete'] = 0;
 
-                // Get the newly created user ID
-                $user_id = $pdo->lastInsertId();
-
-                // ============================================================
-                // INSERT DEFAULT CATEGORIES (9 total)
-                // ============================================================
-                $default_categories = [
-                    ['name' => 'Food', 'icon' => '🍛'],
-                    ['name' => 'Transport', 'icon' => '🚌'],
-                    ['name' => 'Clothing', 'icon' => '👕'],
-                    ['name' => 'School Supplies', 'icon' => '📚'],
-                    ['name' => 'Mobile Top-up', 'icon' => '📱'],
-                    ['name' => 'Café', 'icon' => '☕'],
-                    ['name' => 'Entertainment', 'icon' => '🎮'],
-                    ['name' => 'Health', 'icon' => '🏥'],
-                    ['name' => 'Other', 'icon' => '🔀']
-                ];
-
-                $stmt = $pdo->prepare('
-                    INSERT INTO categories (user_id, name, icon, is_default)
-                    VALUES (:user_id, :name, :icon, 1)
-                ');
-
-                foreach ($default_categories as $category) {
-                    $stmt->execute([
-                        ':user_id' => $user_id,
-                        ':name' => $category['name'],
-                        ':icon' => $category['icon']
-                    ]);
+                    header('Location: onboarding.php');
+                    exit;
                 }
-
-                // ============================================================
-                // SET SESSION AND REDIRECT
-                // ============================================================
-                session_start();
-                $_SESSION['user_id'] = $user_id;
-                $_SESSION['user_name'] = $full_name;
-                $_SESSION['onboarding_complete'] = 0;
-
-                // Redirect to onboarding
-                header('Location: onboarding.php');
-                exit;
+            } catch (PDOException $e) {
+                $error = 'A server error occurred. Please try again later.';
             }
-        } catch (PDOException $e) {
-            $error = 'An error occurred. Please try again later.';
         }
     }
 }
@@ -132,122 +79,159 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Account - Birr Wise</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
+    <title>Create Account — Birr Wise</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --primary: #2E7D32;
-            --primary-light: #4CAF50;
-            --accent: #F9A825;
-            --danger: #C62828;
-            --warning: #F57F17;
-            --success: #2E7D32;
-            --bg: #F5F5F5;
-            --card: #FFFFFF;
-            --text: #212121;
-            --text-muted: #757575;
-            --border: #E0E0E0;
-        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        :root {
+            --bg:       #f0f2f5;
+            --card:     #ffffff;
+            --primary:  #000000;
+            --primary-h:#222222;
+            --danger:   #cc0000;
+            --text:     #0f1419;
+            --muted:    #536471;
+            --border:   #cfd9de;
+            --input-bg: #f7f9f9;
+            --shadow:   0 8px 40px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.08);
         }
 
         body {
-            font-family: 'Inter', sans-serif;
-            background-color: var(--bg);
-            color: var(--text);
+            font-family: 'Orbitron', monospace;
+            background: var(--bg);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
-        }
-
-        .container {
-            width: 100%;
-            max-width: 420px;
+            padding: 24px 16px;
         }
 
         .card {
             background: var(--card);
-            border-radius: 16px;
-            padding: 32px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+            padding: 48px 44px 40px;
+            width: 100%;
+            max-width: 400px;
         }
 
-        .header {
+        .logo {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 28px;
+        }
+        .logo-icon {
+            width: 42px; height: 42px;
+            background: #000;
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,.25);
+            flex-shrink: 0;
+        }
+        .logo-icon img {
+            width: 28px;
+            height: 28px;
+            object-fit: contain;
+            display: block;
+        }
+        .logo-text {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text);
+            letter-spacing: -.4px;
+        }
+
+        h1 {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--text);
             text-align: center;
+            margin-bottom: 6px;
+            letter-spacing: -.5px;
+        }
+        .sub {
+            text-align: center;
+            font-size: 14px;
+            color: var(--muted);
             margin-bottom: 32px;
         }
 
-        .app-name {
-            font-family: 'Poppins', sans-serif;
-            font-size: 24px;
-            font-weight: 700;
-            color: var(--text);
-            margin-bottom: 4px;
+        .alert {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            background: #fff0f3;
+            border: 1px solid #fcc;
+            border-left: 4px solid var(--danger);
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 22px;
+            font-size: 13.5px;
+            color: var(--danger);
+            animation: shake .4s ease;
+        }
+        .alert svg { flex-shrink: 0; margin-top: 1px; }
+
+        @keyframes shake {
+            0%,100%{ transform:translateX(0) }
+            20%    { transform:translateX(-6px) }
+            40%    { transform:translateX(6px) }
+            60%    { transform:translateX(-4px) }
+            80%    { transform:translateX(4px) }
         }
 
-        .app-name span {
-            margin-right: 8px;
-        }
-
-        .subtitle {
-            font-size: 14px;
-            color: var(--text-muted);
-            margin-top: 8px;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
+        .field { margin-bottom: 18px; }
 
         label {
             display: block;
-            font-size: 14px;
-            font-weight: 500;
+            font-size: 13px;
+            font-weight: 600;
             color: var(--text);
-            margin-bottom: 8px;
+            margin-bottom: 7px;
         }
 
-        input {
+        .input-wrap { position: relative; }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="password"] {
             width: 100%;
-            padding: 12px 16px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            font-size: 16px;
-            font-family: 'Inter', sans-serif;
-            transition: border-color 0.3s;
-        }
-
-        input:focus {
+            padding: 13px 16px;
+            background: var(--input-bg);
+            border: 1.5px solid var(--border);
+            border-radius: 10px;
+            font-size: 15px;
+            font-family: inherit;
+            color: var(--text);
+            transition: border-color .2s, box-shadow .2s;
             outline: none;
+        }
+        input:focus {
             border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(0,0,0,.1);
+            background: #fff;
         }
-
-        input.error {
+        input.is-error {
             border-color: var(--danger);
+            box-shadow: 0 0 0 3px rgba(224,36,94,.1);
         }
+        input.has-toggle { padding-right: 46px; }
 
-        .error-message {
+        .field-error {
             font-size: 12px;
             color: var(--danger);
-            margin-top: 4px;
+            margin-top: 5px;
             display: none;
         }
+        .field-error.show { display: block; }
 
-        .error-message.show {
-            display: block;
-        }
-
-        .password-group {
-            position: relative;
-        }
-
-        .password-toggle {
+        /* ── Eye toggle — perfectly centered ── */
+        .eye-btn {
             position: absolute;
             right: 12px;
             top: 50%;
@@ -255,260 +239,259 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             background: none;
             border: none;
             cursor: pointer;
-            font-size: 18px;
-            color: var(--text-muted);
             padding: 4px;
-            margin-top: 12px;
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+            transition: color .2s;
+        }
+        .eye-btn:hover { color: var(--text); }
+        .eye-btn .eye-off { display: none; }
+        .eye-btn.visible .eye-on  { display: none; }
+        .eye-btn.visible .eye-off { display: block; }
+
+        /* ── Password strength bar ── */
+        .strength-bar {
+            height: 4px;
+            border-radius: 2px;
+            background: var(--border);
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        .strength-fill {
+            height: 100%;
+            width: 0%;
+            border-radius: 2px;
+            transition: width .3s, background .3s;
+        }
+        .strength-label {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 4px;
         }
 
-        .password-toggle:hover {
-            color: var(--text);
-        }
-
-        .alert {
-            padding: 12px 16px;
-            border-radius: 4px;
-            margin-bottom: 20px;
-            font-size: 14px;
-            display: none;
-        }
-
-        .alert.show {
-            display: block;
-        }
-
-        .alert-error {
-            background-color: #FFEBEE;
-            border-left: 4px solid var(--danger);
-            color: var(--danger);
-        }
-
-        .alert-success {
-            background-color: #E8F5E9;
-            border-left: 4px solid var(--success);
-            color: var(--success);
-        }
-
-        .btn-primary {
+        .btn {
             width: 100%;
             padding: 14px;
-            background-color: var(--primary);
-            color: white;
+            background: #000;
+            color: #fff;
             border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 700;
+            font-family: inherit;
             cursor: pointer;
-            transition: background-color 0.3s;
-            margin-top: 8px;
+            transition: background .2s, transform .1s, box-shadow .2s;
+            box-shadow: 0 4px 14px rgba(0,0,0,.2);
+            letter-spacing: .2px;
+            margin-top: 6px;
         }
+        .btn:hover  { background: #222; box-shadow: 0 6px 18px rgba(0,0,0,.28); }
+        .btn:active { transform: scale(.98); }
+        .btn:disabled { opacity: .6; cursor: not-allowed; transform: none; }
 
-        .btn-primary:hover {
-            background-color: var(--primary-light);
+        .divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 24px 0;
+            color: var(--muted);
+            font-size: 12px;
         }
-
-        .btn-primary:active {
-            transform: scale(0.98);
+        .divider::before, .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
         }
 
         .footer {
             text-align: center;
-            margin-top: 20px;
             font-size: 14px;
-            color: var(--text-muted);
+            color: var(--muted);
         }
-
         .footer a {
             color: var(--primary);
+            font-weight: 600;
             text-decoration: none;
-            font-weight: 500;
         }
+        .footer a:hover { text-decoration: underline; }
 
-        .footer a:hover {
-            text-decoration: underline;
-        }
-
-        @media (min-width: 768px) {
-            .card {
-                padding: 40px;
-            }
-
-            .header {
-                margin-bottom: 40px;
-            }
+        @media (max-width: 480px) {
+            .card { padding: 36px 24px 32px; }
+            h1 { font-size: 22px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="card">
-            <div class="header">
-                <div class="app-name">
-                    <span>🇪🇹</span>Birr Wise
-                </div>
-                <p class="subtitle">Join Birr Wise — manage your 3000 ETB wisely</p>
-            </div>
+<div class="card">
 
-            <?php if (!empty($error)): ?>
-                <div class="alert alert-error show">
-                    <?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?>
-                </div>
-            <?php endif; ?>
-
-            <form method="POST" action="" id="registerForm" novalidate>
-                <!-- Full Name Field -->
-                <div class="form-group">
-                    <label for="full_name">Full Name</label>
-                    <input 
-                        type="text" 
-                        id="full_name" 
-                        name="full_name" 
-                        placeholder="Your full name"
-                        value="<?php echo htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8'); ?>"
-                        required
-                    >
-                    <div class="error-message"></div>
-                </div>
-
-                <!-- Email Field -->
-                <div class="form-group">
-                    <label for="email">Email Address</label>
-                    <input 
-                        type="email" 
-                        id="email" 
-                        name="email" 
-                        placeholder="your@email.com"
-                        value="<?php echo htmlspecialchars($email, ENT_QUOTES, 'UTF-8'); ?>"
-                        required
-                    >
-                    <div class="error-message"></div>
-                </div>
-
-                <!-- Password Field -->
-                <div class="form-group">
-                    <label for="password">Password</label>
-                    <div class="password-group">
-                        <input 
-                            type="password" 
-                            id="password" 
-                            name="password" 
-                            placeholder="At least 8 characters with a number"
-                            required
-                        >
-                        <button type="button" class="password-toggle" data-target="password">👁️</button>
-                    </div>
-                    <div class="error-message"></div>
-                </div>
-
-                <!-- Confirm Password Field -->
-                <div class="form-group">
-                    <label for="confirm_password">Confirm Password</label>
-                    <div class="password-group">
-                        <input 
-                            type="password" 
-                            id="confirm_password" 
-                            name="confirm_password" 
-                            placeholder="Confirm your password"
-                            required
-                        >
-                        <button type="button" class="password-toggle" data-target="confirm_password">👁️</button>
-                    </div>
-                    <div class="error-message"></div>
-                </div>
-
-                <button type="submit" class="btn-primary">Create Account</button>
-            </form>
-
-            <div class="footer">
-                Already have an account? <a href="login.php">Login</a>
-            </div>
-        </div>
+    <div class="logo">
+        <div class="logo-icon"><img src="/assets/icon/maex.png" alt="Birr Wise" class="logo-img"></div>
+        <span class="logo-text">Birr Wise</span>
     </div>
 
-    <script>
-        /**
-         * Toggle password visibility
-         */
-        document.querySelectorAll('.password-toggle').forEach(toggle => {
-            toggle.addEventListener('click', function(e) {
-                e.preventDefault();
-                const targetId = this.dataset.target;
-                const input = document.getElementById(targetId);
-                const isPassword = input.type === 'password';
-                input.type = isPassword ? 'text' : 'password';
-                this.textContent = isPassword ? '👁️‍🗨️' : '👁️';
-            });
+    <h1>Create account</h1>
+    <p class="sub">Start tracking your spending today.</p>
+
+    <?php if (!empty($error)): ?>
+    <div class="alert" role="alert">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?>
+    </div>
+    <?php endif; ?>
+
+    <form id="registerForm" method="POST" action="" novalidate>
+        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8') ?>">
+
+        <!-- Full Name -->
+        <div class="field">
+            <label for="full_name">Full name</label>
+            <input type="text" id="full_name" name="full_name"
+                placeholder=""
+                value="<?= htmlspecialchars($full_name, ENT_QUOTES, 'UTF-8') ?>"
+                autocomplete="name" required>
+            <div class="field-error" id="nameErr">Please enter your full name.</div>
+        </div>
+
+        <!-- Email -->
+        <div class="field">
+            <label for="email">Email address</label>
+            <input type="email" id="email" name="email"
+                placeholder=""
+                value="<?= htmlspecialchars($email, ENT_QUOTES, 'UTF-8') ?>"
+                autocomplete="email" required>
+            <div class="field-error" id="emailErr">Please enter a valid email address.</div>
+        </div>
+
+        <!-- Password -->
+        <div class="field">
+            <label for="password">Password</label>
+            <div class="input-wrap">
+                <input type="password" id="password" name="password"
+                    placeholder="Min. 8 characters with a number"
+                    class="has-toggle" autocomplete="new-password" required>
+                <button type="button" class="eye-btn" data-target="password" aria-label="Toggle password visibility">
+                    <svg class="eye-on" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    <svg class="eye-off" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="strength-bar"><div class="strength-fill" id="strengthFill"></div></div>
+            <div class="strength-label" id="strengthLabel"></div>
+            <div class="field-error" id="passErr">Min. 8 characters including a number.</div>
+        </div>
+
+        <!-- Confirm Password -->
+        <div class="field">
+            <label for="confirm_password">Confirm password</label>
+            <div class="input-wrap">
+                <input type="password" id="confirm_password" name="confirm_password"
+                    placeholder="Repeat your password"
+                    class="has-toggle" autocomplete="new-password" required>
+                <button type="button" class="eye-btn" data-target="confirm_password" aria-label="Toggle confirm password visibility">
+                    <svg class="eye-on" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    <svg class="eye-off" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="field-error" id="confirmErr">Passwords do not match.</div>
+        </div>
+
+        <button type="submit" class="btn" id="submitBtn">Create account</button>
+    </form>
+
+    <div class="divider">or</div>
+
+    <div class="footer">
+        Already have an account? <a href="login.php">Sign in</a>
+    </div>
+</div>
+
+<script>
+    // ── Eye toggles ─────────────────────────────────────────
+    document.querySelectorAll('.eye-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const input = document.getElementById(btn.dataset.target);
+            const isHidden = input.type === 'password';
+            input.type = isHidden ? 'text' : 'password';
+            btn.classList.toggle('visible', isHidden);
+            btn.setAttribute('aria-label', isHidden ? 'Hide password' : 'Show password');
         });
+    });
 
-        /**
-         * Validate email format
-         */
-        function validateEmail(email) {
-            const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            return regex.test(email);
-        }
+    // ── Password strength ────────────────────────────────────
+    const passInput    = document.getElementById('password');
+    const strengthFill = document.getElementById('strengthFill');
+    const strengthLabel = document.getElementById('strengthLabel');
 
-        /**
-         * Validate password strength
-         */
-        function validatePassword(password) {
-            return password.length >= 8 && /[0-9]/.test(password);
-        }
+    const levels = [
+        { test: p => p.length >= 8 && /[0-9]/.test(p) && /[A-Z]/.test(p) && /[^a-zA-Z0-9]/.test(p), label: 'Strong',  color: '#000000', width: '100%' },
+        { test: p => p.length >= 8 && /[0-9]/.test(p) && /[A-Z]/.test(p),                             label: 'Good',    color: '#555555', width: '66%'  },
+        { test: p => p.length >= 8 && /[0-9]/.test(p),                                                 label: 'Weak',    color: '#cc0000', width: '33%'  },
+    ];
 
-        /**
-         * Client-side form validation
-         */
-        document.getElementById('registerForm').addEventListener('submit', function(e) {
-            let isValid = true;
-            const fields = {
-                full_name: { 
-                    input: document.getElementById('full_name'),
-                    validate: (val) => val.trim() !== '',
-                    errorMsg: 'Full name is required'
-                },
-                email: { 
-                    input: document.getElementById('email'),
-                    validate: (val) => validateEmail(val),
-                    errorMsg: 'Please enter a valid email'
-                },
-                password: { 
-                    input: document.getElementById('password'),
-                    validate: (val) => validatePassword(val),
-                    errorMsg: 'Password must be at least 8 characters with a number'
-                },
-                confirm_password: { 
-                    input: document.getElementById('confirm_password'),
-                    validate: (val) => val === document.getElementById('password').value,
-                    errorMsg: 'Passwords do not match'
-                }
-            };
+    passInput.addEventListener('input', () => {
+        const v = passInput.value;
+        if (!v) { strengthFill.style.width = '0'; strengthLabel.textContent = ''; return; }
+        const lvl = levels.find(l => l.test(v)) || { label: 'Too weak', color: '#cc0000', width: '10%' };
+        strengthFill.style.width    = lvl.width;
+        strengthFill.style.background = lvl.color;
+        strengthLabel.textContent   = lvl.label;
+        strengthLabel.style.color   = lvl.color;
+    });
 
-            // Clear previous errors
-            document.querySelectorAll('.error-message').forEach(msg => {
-                msg.classList.remove('show');
-            });
-            document.querySelectorAll('input').forEach(input => {
-                input.classList.remove('error');
-            });
+    // ── Validation ───────────────────────────────────────────
+    const form        = document.getElementById('registerForm');
+    const nameIn      = document.getElementById('full_name');
+    const emailIn     = document.getElementById('email');
+    const confirmIn   = document.getElementById('confirm_password');
+    const submitBtn   = document.getElementById('submitBtn');
 
-            // Validate each field
-            Object.entries(fields).forEach(([key, field]) => {
-                if (!field.validate(field.input.value)) {
-                    isValid = false;
-                    field.input.classList.add('error');
-                    const errorMsg = field.input.parentElement.querySelector('.error-message') || 
-                                    field.input.nextElementSibling;
-                    if (errorMsg) {
-                        errorMsg.textContent = field.errorMsg;
-                        errorMsg.classList.add('show');
-                    }
-                }
-            });
+    const nameErr    = document.getElementById('nameErr');
+    const emailErr   = document.getElementById('emailErr');
+    const passErr    = document.getElementById('passErr');
+    const confirmErr = document.getElementById('confirmErr');
 
-            if (!isValid) {
-                e.preventDefault();
-            }
-        });
-    </script>
+    function validateEmail(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+    function validatePass(v)  { return v.length >= 8 && /[0-9]/.test(v); }
+
+    function setError(input, errEl, show) {
+        input.classList.toggle('is-error', show);
+        errEl.classList.toggle('show', show);
+    }
+
+    form.addEventListener('submit', e => {
+        let ok = true;
+
+        if (nameIn.value.trim().length < 2)          { setError(nameIn, nameErr, true);       ok = false; } else setError(nameIn, nameErr, false);
+        if (!validateEmail(emailIn.value.trim()))     { setError(emailIn, emailErr, true);     ok = false; } else setError(emailIn, emailErr, false);
+        if (!validatePass(passInput.value))           { setError(passInput, passErr, true);    ok = false; } else setError(passInput, passErr, false);
+        if (confirmIn.value !== passInput.value)      { setError(confirmIn, confirmErr, true); ok = false; } else setError(confirmIn, confirmErr, false);
+
+        if (!ok) { e.preventDefault(); return; }
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creating account…';
+    });
+
+    // Live clear
+    [nameIn, emailIn, passInput, confirmIn].forEach(input => {
+        input.addEventListener('input', () => input.classList.remove('is-error'));
+    });
+</script>
 </body>
 </html>

@@ -28,7 +28,7 @@ try {
     // Get POST data (sanitized)
     $id = intval(sanitize($_POST['id'] ?? '0'));
     $name = sanitize($_POST['name'] ?? '');
-    $icon = sanitize($_POST['icon'] ?? '💰');
+    $icon = sanitize($_POST['icon'] ?? '/assets/icon/user.png');
 
     // Validation
     if ($id <= 0) {

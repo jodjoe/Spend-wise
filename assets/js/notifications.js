@@ -1,3 +1,8 @@
+// ── API helper: auto-switch to mock in preview mode ─────────
+function apiUrl(real, mock) {
+  return document.cookie.includes('preview') || window.__PREVIEW__ ? mock : real;
+}
+
 const popupRootId = 'birr-wise-popup-root';
 const toastRootId = 'birr-wise-toast-root';
 const confirmRootId = 'birr-wise-confirm-root';
@@ -78,10 +83,10 @@ function showPopup(popupData) {
 
   const statusClass = overall_status === 'critical' ? 'danger' : overall_status === 'warning' ? 'warning' : 'success';
   const paceMessage = {
-    on_track: '🟢 You\'re on track this month!',
-    warning: '🟡 Spending a bit fast — slow down',
-    critical: '🔴 Budget critical — careful spending!'
-  }[overall_status] || '🟢 You\'re on track this month!';
+    on_track: '<i class="fa fa-circle-check" style="color:green"></i> You\'re on track this month!',
+    warning: '<i class="fa fa-exclamation-circle" style="color:goldenrod"></i> Spending a bit fast — slow down',
+    critical: '<i class="fa fa-times-circle" style="color:red"></i> Budget critical — careful spending!'
+  }[overall_status] || '<i class="fa fa-circle-check" style="color:green"></i> You\'re on track this month!';
 
   const budgetAlertsHtml = budget_alerts.length
     ? budget_alerts.map(alert => `
@@ -97,17 +102,17 @@ function showPopup(popupData) {
   popup.setAttribute('aria-live', 'polite');
   popup.innerHTML = `
     <div class="popup-header">
-      <div class="popup-title">✅ Expense Saved</div>
+      <div class="popup-title"><i class="fa fa-check-circle" style="color:green"></i> Expense Saved</div>
       <button type="button" class="popup-close" aria-label="Close">&times;</button>
     </div>
     <div class="popup-expense-label">${expense_label}</div>
     <div class="popup-divider"></div>
     <div class="popup-row${remaining_today < 0 ? ' over-limit' : ''}">
-      <span>📅</span>
+      <span><i class="fa fa-calendar"></i></span>
       <span>${remaining_today < 0 ? formatETB(Math.abs(remaining_today)) + ' over today\'s limit' : `Today: ${formatETB(remaining_today)} remaining`}</span>
     </div>
     <div class="popup-row${remaining_month < 0 ? ' over-limit' : ''}">
-      <span>📊</span>
+      <span><i class="fa fa-chart-bar"></i></span>
       <span>${remaining_month < 0 ? formatETB(Math.abs(remaining_month)) + ' over monthly allowance' : `Month: ${formatETB(remaining_month)} remaining`}</span>
     </div>
     ${budgetAlertsHtml ? `<div class="popup-alerts">${budgetAlertsHtml}</div>` : ''}
@@ -130,9 +135,9 @@ function showPopup(popupData) {
 function showToast(message, type = 'success', duration = 3000) {
   const container = createToastContainer();
   const iconMap = {
-    success: '✅',
-    error: '❌',
-    warning: '⚠️'
+    success: '<i class="fa fa-check-circle"></i>',
+    error: '<i class="fa fa-times-circle"></i>',
+    warning: '<i class="fa fa-exclamation-circle"></i>'
   };
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;

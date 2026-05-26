@@ -191,7 +191,7 @@ $selected_categories = $_SESSION['selected_categories'] ?? [];
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Setup - Birr Wise</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary: #2E7D32;
@@ -214,7 +214,7 @@ $selected_categories = $_SESSION['selected_categories'] ?? [];
         }
 
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: 'Orbitron', monospace;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100vh;
@@ -265,7 +265,7 @@ $selected_categories = $_SESSION['selected_categories'] ?? [];
         }
 
         .title {
-            font-family: 'Poppins', sans-serif;
+            font-family: 'Orbitron', monospace;
             font-size: 20px;
             font-weight: 700;
             color: var(--text);
@@ -315,7 +315,7 @@ $selected_categories = $_SESSION['selected_categories'] ?? [];
             border: 1px solid var(--border);
             border-radius: 8px;
             font-size: 16px;
-            font-family: 'Inter', sans-serif;
+            font-family: 'Orbitron', monospace;
             transition: border-color 0.3s;
         }
 

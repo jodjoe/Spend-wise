@@ -71,6 +71,11 @@ function get_current_page() {
 // AUTH ENFORCEMENT
 // ============================================================
 
+// ── Preview mode: skip all DB checks ──
+if (!empty($_SESSION['preview_mode']) && is_logged_in()) {
+    return;
+}
+
 // If user is not logged in
 if (!is_logged_in()) {
     if (is_json_request()) {

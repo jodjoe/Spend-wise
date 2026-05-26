@@ -32,7 +32,7 @@ CREATE TABLE categories (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     name VARCHAR(50) NOT NULL,
-    icon VARCHAR(10) DEFAULT '💰',
+    icon VARCHAR(255) DEFAULT '/assets/icon/user.png',
     is_default TINYINT(1) DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

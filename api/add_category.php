@@ -27,7 +27,7 @@ try {
 
     // Get POST data (sanitized)
     $name = sanitize($_POST['name'] ?? '');
-    $icon = sanitize($_POST['icon'] ?? '💰');
+    $icon = sanitize($_POST['icon'] ?? '/assets/icon/user.png');
 
     // Validation
     if (empty($name)) {
